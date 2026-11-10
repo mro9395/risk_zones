@@ -109,7 +109,7 @@ All spatial layers are reprojected to EPSG:32614 before distance, area, buffer, 
 | `citywide_population_eligible_polygons.geojson` | Citywide population notebook | Polygons strictly above the population threshold (zero by default). |
 | `citywide_population_risk_clusters.csv/.geojson` | Citywide population notebook | Dissolved clusters of single-part polygons at 5, 25, 50, 100, and 200 m gaps, with area-weighted population and bounding-box span measures. |
 | `citywide_population_cluster_membership.csv` | Citywide population notebook | Source-polygon to cluster links for each gap scenario. |
-| `citywide_cluster_map_{gap}m.html` | Citywide population notebook | Interactive map of all selected-gap dissolved clusters, with hover details for polygon count, source-feature count, population, and span (5 m by default). |
+| `citywide_cluster_map_{gap}m.html` | Citywide population notebook | Interactive map of all selected-gap dissolved clusters, with hover details for polygon count, source-feature count, population, and span (5 m by default). The layer control switches between OpenTopoMap streets and terrain and Esri satellite imagery; the saved HTML needs internet access for basemap tiles. |
 | `citywide_population_cluster_draw_frame.csv/.geojson` | Citywide population notebook | Every cluster at the chosen draw gap, its broad geographic group, random order, and selection status. |
 | `citywide_population_selected_clusters.csv/.geojson` | Citywide population notebook | Five primary candidate cluster polygons and no reserves by default. |
 | `citywide_population_selected_boundary_polygons.geojson` | Citywide population notebook | Individual high-risk polygon parts belonging to selected clusters, with original source IDs. |
