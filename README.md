@@ -10,14 +10,16 @@ The wider comparative framing is a coherent family of rapid-onset geomorphologic
 - Lima: huayco, debris-flow, or related geomorphological risk.
 - CDMX: slope instability / landslide.
 
-The current strategy is to retain the CDMX hazard family while allowing study geography to vary across alcaldías. Subsidence remains a possible fallback or supplemental analysis, not the present primary design.
+The current strategy is to retain the CDMX hazard family while allowing study geography to vary across alcaldías. Subsidence remains a possible fallback or supplemental analysis, not the present primary design. The current citywide rules are recorded in [SAMPLING_PROTOCOL.md](SAMPLING_PROTOCOL.md).
 
-## Current CDMX study frame
+## Earlier four-alcaldía cadastre study frame
 
 - Alcaldías: Álvaro Obregón (`aob`), Cuajimalpa (`cuj`), Gustavo A. Madero (`gam`), and Iztapalapa (`izp`).
 - Risk layer: the national slope-instability / landslide risk layer, restricted to the highest selected risk category (`alta` by default).
 - Household proxy: one representative point per cadastre parcel.
 - Coordinate reference system for measurement: EPSG:32614, in metres.
+
+The citywide population-and-cluster notebook uses a different, all-CDMX frame with no current alcaldía exclusions. Its sources, screens, 100 m draw gap, and manual exclusion status are documented in [SAMPLING_PROTOCOL.md](SAMPLING_PROTOCOL.md).
 
 ## Notebooks
 
@@ -116,14 +118,16 @@ All spatial layers are reprojected to EPSG:32614 before distance, area, buffer, 
 | `citywide_population_cluster_exclusion_audit.csv/.geojson` | Citywide population notebook | Every cluster at the chosen draw gap, its geographic group, district names, manual exclusion flag, and whether it entered the draw frame. |
 | `citywide_population_cluster_draw_frame.csv/.geojson` | Citywide population notebook | Clusters remaining after manual exclusions, with geographic group, random order, and selection status. |
 | `citywide_population_selection_totals.csv` | Citywide population notebook | Dissolved-union estimated population before district exclusion, after district exclusion, after boundary filters, after manual cluster exclusions, and after selection. |
-| `citywide_population_selected_clusters.csv/.geojson` | Citywide population notebook | Five primary candidate cluster polygons and no reserves by default. |
+| `citywide_sampling_allocation_power_sensitivity.csv` | Citywide population notebook | Survey power simulations by completed-interview total, cluster count, baseline prevalence, and site-level difference variation, plus verified DCE reference power where available. |
+| `citywide_sampling_reserve_sensitivity.csv` | Citywide population notebook | Ordered reserve counts under assumed site-usability probabilities. |
+| `citywide_population_selected_clusters.csv/.geojson` | Citywide population notebook | Primary and reserve candidate polygons once both draw counts are explicitly chosen. |
 | `citywide_population_selected_boundary_polygons.geojson` | Citywide population notebook | Individual high-risk polygon parts belonging to selected clusters, with original source IDs, `GM_2020` values, and mean `IM_2020`. |
 | `citywide_population_cluster_manifest.json` | Citywide population notebook | Source filenames, `GM_2020` and `IM_2020` assignment and screening rules, population, density, and settlement-point thresholds, five dissolved-union population totals, district and manual cluster exclusion settings, random seed, and geographic splits by gap. |
 | `citywide_cluster_size_diagnostics.png` | Citywide population notebook | Cluster counts by gap, member polygon counts, and estimated population at the chosen gap. |
 | `citywide_cluster_map_before_draw.png` | Citywide population notebook | Population raster with selected-gap cluster boundaries retained after district and boundary screening and people/km² labels for up to 20 populous clusters, produced before the draw. |
 | `citywide_cluster_gap_comparison.png` | Citywide population notebook | Small maps comparing 5, 25, 50, 100, and 200 m cluster geometry, with median cluster density in each title. |
 
-The citywide notebook reads the high-risk polygons, WorldPop raster, 2022 irregular-settlement points, and IMUC colonia GeoJSON from the Colab Drive `data/raw` folder and writes to `data/output`. It does not use cadastre or vulnerable-lot data. `EXCLUDED_NOM_MUN = ['Xochimilco']` removes source features with that exact district name before polygon splitting, population screening, clustering, maps, summaries, and drawing; set the list to `[]` to retain all districts. The notebook prints available `NOM_MUN` values, rejects unknown names, and saves a source-feature exclusion audit. It splits each retained MultiPolygon into individual Polygon parts, preserving original source IDs and district names, so distant pieces of a single feature do not automatically form one cluster. Distinct `GM_2020` labels from colonias with positive-area overlap are sorted and joined with `; ` for each boundary; shared edges alone do not count, and missing labels remain missing. For `IM_2020`, each boundary receives the arithmetic mean of nonmissing values from its intersecting colonias, counting each colonia once. Dissolved clusters are intersected with colonias again, so their means do not double-count a colonia shared by several member polygons. The `GM_2020` screen excludes a boundary only if all overlapping colonias have known categories and every category is `Bajo` or `Muy bajo`; mixed `Bajo`/`Medio` boundaries remain. `IM_2020` values above 150 are excluded by default, while missing values remain; editable inclusive bounds and a missing-value switch control this numeric screen. The audit records every screen flag and the first exclusion reason. Population is an exact area-fraction-weighted raster sum, and density divides that estimate by high-risk polygon area in km². The population and density cutoffs are strictly above 30 estimated people and 1,200 people/km² by default. A configurable minimum counts distinct 2022 irregular-settlement points inside each boundary; the default is zero, so absence of a mapped point does not exclude a polygon. Cluster population and settlement-point counts are recomputed on dissolved geometry to avoid double counting within clusters. The notebook prints dissolved-union population totals for all citywide source boundaries, after district exclusion, after boundary screening, after manual cluster exclusions, and after selection; a CSV and manifest preserve these values. Exact 5 m perimeter links use metre-based EPSG:32614, with 25, 50, 100, and 200 m sensitivity scenarios. The notebook reports cluster bounding-box span because transitive chains can span more than 1 km even when every link is within 5 m. Geographic groups are used to spread the random draw, not to exclude clusters. An editable cluster-ID list can exclude specific sites after the maps. Five primary clusters and no reserves are requested with a fixed seed; if fewer than five candidates remain, the notebook reports the available frame and stops. Previous `_all` cluster exports from the old south-group workflow are superseded by the current cluster files and source-district audit. The selected sites require subsequent physical and household-frame review.
+The current citywide population-and-cluster rules are specified in [SAMPLING_PROTOCOL.md](SAMPLING_PROTOCOL.md). In particular, no alcaldía is currently excluded, the population cutoff is strictly above 30 estimated people, the density cutoff is strictly above 0 people/km², the draw gap is 100 m, and the 100 m draw cell has 47 manual cluster exclusions. The notebook source and manifest govern any later run-specific changes. The site draw remains a screening step; it does not establish household eligibility or the final survey sampling frame.
 
 The boundary-sampling notebook reads the baseline outputs `risk_polygon_household_counts.geojson`, `catastro_points.geojson`, and `catastro_parcels_4326.geojson`. Its default configuration samples 15 parcels each from `P01311` and `P01427` within 20 m of their boundaries, using a fixed seed. The polygon selection can be changed to all polygons. The eligible-parcel GeoJSON and its candidate count follow that current sampling selection; with the default settings they cover only `P01311` and `P01427`. An overlapping parcel appears once with all qualifying risk-polygon IDs and a `selected_for_sample` flag. For a parcel eligible on different sides of different risk polygons, `boundary_side` uses inside precedence. The **full universe** table and CSV instead count unique parcels across **every** high-risk polygon in the four-alcaldía file, regardless of sampling selection: (1) anywhere inside, (2) inside within the configured boundary band, and (3) outside every high-risk polygon within the configured boundary band. The per-boundary CSV reports the same three measures for each individual polygon; a parcel can appear in several rows, so row totals are not unique citywide totals. These measures use only cadastre representative points, not the vulnerable-lot layers. The inside-band count is a subset of the all-inside count. A bar chart and parcel maps preview these results in Colab before download. Each saved cadastre parcel is selected at most once in a run; the audit reports shortages instead of silently reducing the requested sample. The export verifies that each representative point matches its parcel polygon. The `P` IDs and cadastre point IDs are generated by the saved baseline outputs, so keep those files from the same run when reproducing a sample.
 
@@ -148,7 +152,7 @@ The clustered output contains these main fields:
 | Decision | Current position |
 |---|---|
 | CDMX primary hazard | Slope instability / landslide. |
-| Geographic scope | Flexible within CDMX; currently four alcaldías. |
+| Geographic scope | Citywide risk-polygon screening; no current alcaldía exclusion. Earlier cadastre analyses cover four alcaldías only. |
 | Polygon gap sensitivity | 25 m, 50 m, 100 m, 200 m. |
 | Cluster distance metric | Parameterized: perimeter or centroid. |
 | Outside household band | 20 m default parameter. |
@@ -159,8 +163,7 @@ The clustered output contains these main fields:
 
 ## Next steps
 
-1. Revise the clustered notebook to avoid artificial splitting at alcaldía borders.
-2. Run all four gap scenarios under both distance definitions.
-3. Map and inspect promising clusters.
-4. Select the best 3–5 physically interpretable boundary clusters.
-5. Decide whether the CDMX slope-instability design is viable before considering subsidence as a fallback.
+1. Reconcile the 47 manual cluster exclusions with their reasons in the companion spreadsheet before freezing a draw.
+2. Check residential-location availability and inside/outside feasibility for the eligible citywide clusters.
+3. Select the final number of clusters and household-location allocation using field capacity and cluster-sensitive power scenarios.
+4. Freeze the final cluster draw, its input versions, random seed, and exclusion audit before fieldwork.
