@@ -58,13 +58,13 @@ RUN_LABEL = 'study_2026'  # retain this for both waves; change for a new design
 OUTPUT_BASE = PROJECT_ROOT / 'data/output/parcel_household_sample' / RUN_LABEL
 DRAW_STAGE = 1  # 1 now; set 2 only after stage 1 is frozen and extension is chosen
 OUTPUT_DIR = OUTPUT_BASE / f'stage{DRAW_STAGE}'
+STAGE1_RELEASED_RESERVES_CSV = None  # for Stage 2: CSV with parcel_id of reserves actually released; empty header if none
 
 EXPECTED_PRIMARY_CLUSTERS = 12
 BOUNDARY_BAND_M = 20.0
-FIELD_ELIGIBILITY_FILE = None  # optional CSV: parcel_id,eligible; required for a final draw
 STAGE1_COMPLETED_TARGET = 200
 STAGE2_ADDITIONAL_COMPLETED_TARGET = 200
-PLANNING_RESPONSE_RATE = None  # 0 < rate <= 1; use a full contact log or a stated assumption
+PLANNING_RESPONSE_RATE = 0.50  # assumes half of selected parcel contacts yield completed interviews
 RANDOM_SEED = 20261120
 RUN_DRAW = False  # set True once the 12-cluster frame and response rate are ready
 FINAL_DRAW = True  # set False only for a labeled pilot/provisional test
@@ -120,20 +120,6 @@ review['within_band'] = review.boundary_distance_m <= BOUNDARY_BAND_M
 review['active_cluster'] = review.cluster_id.isin(ACTIVE_CLUSTER_IDS)
 review['review_ready'] = ~review.review_status.isin(['unreviewed','deleted'])
 frame = review.loc[review.within_band & review.active_cluster & review.review_status.ne('deleted')].copy()
-if FIELD_ELIGIBILITY_FILE is not None:
-    field = pd.read_csv(FIELD_ELIGIBILITY_FILE, dtype=str)
-    if not {'parcel_id','eligible'} <= set(field.columns) or field.parcel_id.duplicated().any():
-        raise ValueError('Field eligibility file needs unique parcel_id and eligible columns.')
-    field['eligible'] = field.eligible.str.strip().str.lower().map({'yes':True,'true':True,'1':True,
-                                                                     'no':False,'false':False,'0':False})
-    if field.eligible.isna().any():
-        raise ValueError('Unrecognized field eligibility value.')
-    frame = frame.merge(field[['parcel_id','eligible']], on='parcel_id', how='left', validate='one_to_one')
-    if frame.eligible.isna().any():
-        raise ValueError('Field eligibility file does not cover every candidate parcel.')
-    frame = frame.loc[frame.eligible].copy()
-else:
-    frame['eligible'] = pd.NA
 
 print('All review parcels:',len(review),'within 20 m in active clusters:',len(frame))
 print('Unreviewed candidate parcels:',int((~frame.review_ready).sum()))
@@ -165,7 +151,7 @@ display(pd.DataFrame({'completed_total':[200,300,400,600,800,1000],
 
 md('''## Draw
 
-Run Stage 1 first. To extend, set `DRAW_STAGE = 2`; the notebook draws only from parcels left after Stage 1. At each selected parcel, list all `H` eligible households in a fixed order and interview number `floor(household_draw_u × H) + 1`. Record `H`, the chosen number, and the contact outcome.
+Run Stage 1 first. All reviewed parcels enter the draw; check residential eligibility during the visit. If a parcel has no eligible household, log it and release the next reserve on the same cluster and side. At a residential parcel, list all `H` eligible households in a fixed order and interview number `floor(household_draw_u × H) + 1`. For Stage 2, list released Stage 1 reserve IDs in `STAGE1_RELEASED_RESERVES_CSV` so they cannot be drawn again.
 ''')
 
 code('''# Parcels are the frame; one household is chosen randomly inside each selected parcel.
@@ -182,8 +168,8 @@ cluster_draw_sha256=(hashlib.sha256(CLUSTER_DRAW_CSV.read_bytes()).hexdigest()
 if RUN_DRAW and FINAL_DRAW:
     if cluster_draw is None or missing_cluster_frames or len(ACTIVE_CLUSTER_IDS)!=EXPECTED_PRIMARY_CLUSTERS:
         raise ValueError('Run the earlier cluster notebook and supply reviewed parcels for all 12 primary clusters.')
-    if FIELD_ELIGIBILITY_FILE is None or not frame.review_ready.all():
-        raise ValueError('Final draw requires field eligibility and reviewed parcel statuses.')
+    if not frame.review_ready.all():
+        raise ValueError('Final draw requires reviewed parcel statuses.')
 
 def stratum_seed(master,stage,cluster,side):
     digest=hashlib.sha256(f'{master}|stage{stage}|{cluster}|{side}'.encode()).digest()
@@ -216,6 +202,17 @@ if RUN_DRAW:
                 raise ValueError(f'Stage 1 frame/design changed: {key}. Audit before extension.')
         prior=pd.read_csv(stage1_dir/'random_order_and_selection.csv',dtype={'unit_id':str})
         prior_selected=prior.loc[prior.selected.astype(str).str.lower().eq('true')].copy()
+        if STAGE1_RELEASED_RESERVES_CSV is None:
+            raise ValueError('For Stage 2, provide a CSV listing Stage 1 released reserve parcel_id values (header only if none).')
+        released=pd.read_csv(STAGE1_RELEASED_RESERVES_CSV,dtype={'parcel_id':str})
+        if 'parcel_id' not in released or released.parcel_id.isna().any() or released.parcel_id.duplicated().any():
+            raise ValueError('Released-reserve CSV needs unique, nonempty parcel_id values.')
+        reserve_rows=prior.loc[~prior.selected.astype(str).str.lower().eq('true')].copy()
+        if not set(released.parcel_id).issubset(set(reserve_rows.parcel_id)):
+            raise ValueError('Released-reserve CSV names a parcel outside the Stage 1 reserve order.')
+        prior_released=reserve_rows.loc[reserve_rows.parcel_id.isin(released.parcel_id)].copy()
+        prior_released['selected']=True
+        prior_selected=pd.concat([prior_selected,prior_released],ignore_index=True)
         if not set(prior_selected.unit_id).issubset(set(units.unit_id)):
             raise ValueError('A stage 1 selected unit is absent from the current frame.')
         available=units.loc[~units.unit_id.isin(prior_selected.unit_id)].copy()
@@ -246,6 +243,8 @@ if RUN_DRAW:
                                                 group.within_cluster_side_probability)
         parts.append(group)
     draw=pd.concat(parts,ignore_index=True)
+    if DRAW_STAGE==2 and len(prior_released):
+        draw['overall_inclusion_probability']=np.nan  # adaptive reserve releases need outcome-based weights
     draw['draw_stage']=DRAW_STAGE
     draw['draw_scope']='final' if FINAL_DRAW else 'provisional_partial'
     print(f'Stage {DRAW_STAGE}: {target} planned completions; {stage_contact_target} contacts at the assumed response rate.')
@@ -263,6 +262,9 @@ export_dir.mkdir(parents=True,exist_ok=True)
 frame.drop(columns='geometry').to_csv(export_dir/'candidate_parcel_frame.csv',index=False)
 if draw is not None:
     draw.to_csv(export_dir/'random_order_and_selection.csv',index=False)
+    reserves=draw.loc[~draw.selected].sort_values(['cluster_id','boundary_side','random_order']).copy()
+    reserves['reserve_rank']=reserves.random_order-reserves.stage_contact_quota
+    reserves.to_csv(export_dir/'reserve_parcel_order.csv',index=False)
     contact=draw.loc[draw.selected,['unit_id','parcel_id','cluster_id','boundary_side',
                                     'random_order','within_cluster_side_probability',
                                     'overall_inclusion_probability']].copy()
@@ -286,6 +288,9 @@ if draw is not None:
             combined.loc[indices,'within_cluster_side_probability']=conditional
             combined.loc[indices,'overall_inclusion_probability']=(
                 cluster_selection_probabilities.get(cluster,np.nan)*conditional)
+        if len(prior_released):
+            combined['overall_inclusion_probability']=np.nan
+            print('Stage 1 reserves were released; final household weights need the field outcomes.')
         combined.to_csv(export_dir/'combined_selected_stage1_stage2.csv',index=False)
 manifest={'created_utc':datetime.now(timezone.utc).isoformat(),
           'run_label':RUN_LABEL,
@@ -300,7 +305,6 @@ manifest={'created_utc':datetime.now(timezone.utc).isoformat(),
           'stage_contact_target':stage_contact_target,
           'planning_response_rate':PLANNING_RESPONSE_RATE,'random_seed':RANDOM_SEED,
           'final_draw':FINAL_DRAW,'run_draw':RUN_DRAW,
-          'field_eligibility_file':str(FIELD_ELIGIBILITY_FILE) if FIELD_ELIGIBILITY_FILE else None,
           'household_selection_rule':'floor(household_draw_u * eligible_households_count) + 1'}
 (export_dir/'sampling_manifest.json').write_text(json.dumps(manifest,indent=2),encoding='utf-8')
 print('Outputs:',export_dir)

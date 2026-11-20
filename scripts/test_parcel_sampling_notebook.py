@@ -33,12 +33,17 @@ with TemporaryDirectory() as folder:
     assert (folder/'parcel_run/stage1/random_order_and_selection.csv').exists()
     assert (folder/'parcel_run/stage1/sampling_manifest.json').exists()
     first=set(namespace['draw'].loc[namespace['draw'].selected,'unit_id'])
-    namespace.update(DRAW_STAGE=2,OUTPUT_DIR=folder/'parcel_run/stage2')
+    reserve=namespace['draw'].loc[~namespace['draw'].selected].iloc[0].parcel_id
+    released_file=folder/'released_reserves.csv'
+    pd.DataFrame({'parcel_id':[reserve]}).to_csv(released_file,index=False)
+    namespace.update(DRAW_STAGE=2,OUTPUT_DIR=folder/'parcel_run/stage2',
+                     STAGE1_RELEASED_RESERVES_CSV=released_file)
     for number in (8,9):
         source=''.join(notebook['cells'][number]['source'])
         exec(compile(source,f'extension cell {number}','exec'),namespace)
     second=set(namespace['draw'].loc[namespace['draw'].selected,'unit_id'])
-    assert len(first)==len(second)==4 and first.isdisjoint(second)
+    assert len(first)==len(second)==4 and first.isdisjoint(second) and reserve not in second
     combined=pd.read_csv(folder/'parcel_run/stage2/combined_selected_stage1_stage2.csv')
-    assert len(combined)==8
+    assert len(combined)==9
+    assert combined.overall_inclusion_probability.isna().all()
     print('Notebook parcel draws and nonoverlapping extension passed')
