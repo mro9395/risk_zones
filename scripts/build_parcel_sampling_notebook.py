@@ -96,7 +96,7 @@ The table shows every cluster in Parcel Review. The draw fixes each cluster's ra
 ''')
 
 code('''if RUN_DRAW:
-    draw, stage_dir, added, reused, migrated = incremental_draw(
+    draw, stage_dir, added, reused, migrated, rebalanced = incremental_draw(
         frame, clusters, OUTPUT_BASE, DRAW_STAGE, quota_per_side, RANDOM_SEED,
         primary_probabilities,
         STAGE1_RELEASED_RESERVES_CSV if DRAW_STAGE == 2 else None)
@@ -117,11 +117,14 @@ code('''if RUN_DRAW:
                 'quota_per_cluster_side':quota_per_side,
                 'random_seed':RANDOM_SEED,
                 'added_clusters':added,'reused_clusters':reused,
-                'migrated_prior_cluster_draws':migrated}
+                'migrated_prior_cluster_draws':migrated,
+                'rebalanced_clusters':rebalanced}
     (stage_dir/'sampling_manifest.json').write_text(json.dumps(manifest,indent=2),encoding='utf-8')
     print('New cluster draws:', added, '| Preserved cluster draws:', reused)
     if migrated:
-        print('Migrated older draw files without changing their selected parcels:', migrated)
+        print('Migrated older draw files, preserving their random order:', migrated)
+    if rebalanced:
+        print('Balanced inside/outside selections using saved random ranks:', rebalanced)
     print('Selected parcels:', int(draw.selected.sum()), '| Reserves:', int((~draw.selected).sum()))
     display(summary)
     print('Outputs:', stage_dir)

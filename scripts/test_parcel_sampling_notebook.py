@@ -27,13 +27,14 @@ assert not review.review_status.eq('unreviewed').any()
 
 with TemporaryDirectory() as folder:
     base = Path(folder)
-    first,stage_dir,added,reused,migrated = draw_fn(frame,clusters,base,1,17,20261120,{})
+    first,stage_dir,added,reused,migrated,rebalanced = draw_fn(frame,clusters,base,1,17,20261120,{})
     assert len(added) == 5 and not reused
     summary = summary_fn(review,frame,first,17,None).set_index('cluster_id')
     assert len(summary) == 5
     assert summary.loc['PER_100m_C00044','inside_selected'] == 7
+    assert summary.loc['PER_100m_C00044','outside_selected'] == 7
     assert summary.loc['PER_100m_C00044','inside_shortfall'] == 10
-    assert first.selected.sum() < 170
+    assert first.selected.sum() == 150
     namespace['save_field_outputs'](review,first,stage_dir)
     assert (stage_dir/'selected_parcels.geojson').exists()
     contact_path = stage_dir/'field_contact_log_template.csv'
@@ -49,15 +50,31 @@ with TemporaryDirectory() as folder:
     assert logged.loc[0,'eligibility'] == 'store'
     frozen = {p.name:p.read_bytes() for p in (stage_dir/'frozen_clusters').glob('*.csv')}
 
-    again,_,added,reused,migrated = draw_fn(frame,clusters,base,1,17,20261120,{})
+    again,_,added,reused,migrated,rebalanced = draw_fn(frame,clusters,base,1,17,20261120,{})
     assert not added and len(reused) == 5
     assert {p.name:p.read_bytes() for p in (stage_dir/'frozen_clusters').glob('*.csv')} == frozen
     assert set(first.loc[first.selected,'parcel_id']) == set(again.loc[again.selected,'parcel_id'])
 
+    old_base = base/'old_allocation'
+    _,old_stage,_,_,_,_ = draw_fn(frame,clusters,old_base,1,17,20261120,{})
+    c44_csv = old_stage/'frozen_clusters/PER_100m_C00044.csv'
+    c44_meta = old_stage/'frozen_clusters/PER_100m_C00044.json'
+    old_part = pd.read_csv(c44_csv)
+    outside = old_part.boundary_side.eq('outside')
+    old_part.loc[outside,'selected'] = old_part.loc[outside,'random_order'].le(17)
+    old_part.to_csv(c44_csv,index=False)
+    old_metadata = json.loads(c44_meta.read_text(encoding='utf-8'))
+    old_metadata.pop('allocation_rule')
+    c44_meta.write_text(json.dumps(old_metadata),encoding='utf-8')
+    balanced,_,_,_,_,rebalanced = draw_fn(frame,clusters,old_base,1,17,20261120,{})
+    assert rebalanced == ['PER_100m_C00044']
+    assert balanced.selected.sum() == 150
+    assert (old_stage/'previous_draws/PER_100m_C00044_before_balance.csv').exists()
+
     legacy_base = base/'legacy_run'
     (legacy_base/'stage1').mkdir(parents=True)
     first.to_csv(legacy_base/'stage1/random_order_and_selection.csv',index=False)
-    migrated_draw,_,added,reused,migrated = draw_fn(frame,clusters,legacy_base,1,17,20261120,{})
+    migrated_draw,_,added,reused,migrated,rebalanced = draw_fn(frame,clusters,legacy_base,1,17,20261120,{})
     assert not added and len(reused) == len(migrated) == 5
     assert set(migrated_draw.loc[migrated_draw.selected,'parcel_id']) == set(
         first.loc[first.selected,'parcel_id'])
@@ -75,7 +92,7 @@ with TemporaryDirectory() as folder:
         extra_clusters.append(row)
     expanded_frame = gpd.GeoDataFrame(pd.concat([frame,*extra_parts]),geometry='geometry',crs=frame.crs)
     expanded_clusters = gpd.GeoDataFrame(pd.concat([clusters,*extra_clusters]),geometry='geometry',crs=clusters.crs)
-    expanded,_,added,reused,migrated = draw_fn(expanded_frame,expanded_clusters,base,1,17,20261120,{})
+    expanded,_,added,reused,migrated,rebalanced = draw_fn(expanded_frame,expanded_clusters,base,1,17,20261120,{})
     assert len(added) == 2 and len(reused) == 5
     old = expanded.loc[expanded.cluster_id.isin(set(frame.cluster_id))]
     assert set(old.loc[old.selected,'parcel_id']) == set(first.loc[first.selected,'parcel_id'])
@@ -85,7 +102,7 @@ with TemporaryDirectory() as folder:
     reserve_id = expanded.loc[~expanded.selected,'parcel_id'].iloc[0]
     released_path = base/'released.csv'
     pd.DataFrame({'parcel_id':[reserve_id]}).to_csv(released_path,index=False)
-    second,_,_,_,_ = draw_fn(expanded_frame,expanded_clusters,base,2,17,20261120,{},released_path)
+    second,_,_,_,_,_ = draw_fn(expanded_frame,expanded_clusters,base,2,17,20261120,{},released_path)
     assert reserve_id not in set(second.parcel_id)
     assert set(expanded.loc[expanded.selected,'parcel_id']).isdisjoint(
         set(second.loc[second.selected,'parcel_id']))

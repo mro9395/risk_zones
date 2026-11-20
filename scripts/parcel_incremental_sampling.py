@@ -73,12 +73,15 @@ def load_released_reserves(path, prior):
 def draw_one_cluster(cluster_frame, cluster_id, stage, quota_per_side, seed,
                      full_counts, primary_probability):
     rows = []
+    balanced_quota = min(quota_per_side,
+                         int(cluster_frame.boundary_side.eq('inside').sum()),
+                         int(cluster_frame.boundary_side.eq('outside').sum()))
     for side in ('inside','outside'):
         group = cluster_frame.loc[cluster_frame.boundary_side.eq(side)].sort_values('parcel_id').copy()
         if group.empty:
             continue
         rng = np.random.default_rng(stratum_seed(seed, stage, cluster_id, side))
-        quota = min(quota_per_side, len(group))
+        quota = balanced_quota
         group['random_order'] = rng.permutation(len(group)) + 1
         group['household_draw_u'] = rng.random(len(group))
         group['selected'] = group.random_order.le(quota)
@@ -114,7 +117,10 @@ def migrate_existing_draw(frame, clusters, stage_dir, frozen_dir, stage,
             raise ValueError(f'{cluster_id} differs from the existing draw; no old selection was replaced.')
         if part.household_draw_u.isna().any():
             raise ValueError(f'{cluster_id} has no saved household random values.')
-        part['selected'] = part.selected.astype(str).str.lower().eq('true')
+        balanced_quota = min(quota_per_side,
+                             int(full.boundary_side.eq('inside').sum()),
+                             int(full.boundary_side.eq('outside').sum()))
+        part['selected'] = pd.to_numeric(part.random_order).le(balanced_quota)
         part['planned_quota'] = quota_per_side
         part['selected_quota'] = 0
         part['capacity_shortfall'] = 0
@@ -133,7 +139,9 @@ def migrate_existing_draw(frame, clusters, stage_dir, frozen_dir, stage,
         meta = {'cluster_id':cluster_id,'stage':stage,
                 'frame_hash':cluster_frame_hash(full,clusters.loc[cluster_id].geometry),
                 'quota_per_side':quota_per_side,'random_seed':seed,
-                'released_stage1_reserves':[], 'migrated_from_prior_draw':True}
+                'released_stage1_reserves':[],
+                'allocation_rule':'equal_inside_outside_within_cluster',
+                'migrated_from_prior_draw':True}
         (frozen_dir/f'{safe_id}.json').write_text(json.dumps(meta,indent=2),encoding='utf-8')
         migrated.append(cluster_id)
     manifest_path = stage_dir/'sampling_manifest.json'
@@ -160,6 +168,7 @@ def incremental_draw(frame, clusters, output_base, stage, quota_per_side, seed,
     all_parts = []
     added = []
     reused = []
+    rebalanced = []
     for cluster_id in sorted(frame.cluster_id.unique()):
         full = frame.loc[frame.cluster_id.eq(cluster_id)].copy()
         frame_hash = cluster_frame_hash(full, clusters.loc[cluster_id].geometry)
@@ -178,16 +187,44 @@ def incremental_draw(frame, clusters, output_base, stage, quota_per_side, seed,
         released_here = sorted(set(full.parcel_id.str.upper()) & released_ids)
         expected = {'cluster_id':cluster_id,'stage':stage,'frame_hash':frame_hash,
                     'quota_per_side':quota_per_side,'random_seed':seed,
-                    'released_stage1_reserves':released_here}
+                    'released_stage1_reserves':released_here,
+                    'allocation_rule':'equal_inside_outside_within_cluster'}
         if csv_path.exists() != meta_path.exists():
             raise ValueError(f'Incomplete frozen draw for {cluster_id}.')
         if csv_path.exists():
             saved = json.loads(meta_path.read_text(encoding='utf-8'))
-            if any(saved.get(key) != value for key,value in expected.items()):
+            if any(saved.get(key) != value for key,value in expected.items()
+                   if key != 'allocation_rule'):
                 raise ValueError(f'{cluster_id} changed after its draw; prior selections were kept. Review the frame.')
             part = pd.read_csv(csv_path, dtype={'parcel_id':str,'cluster_id':str})
             if set(part.parcel_id.str.upper()) != set(available.parcel_id.str.upper()):
                 raise ValueError(f'{cluster_id} frozen draw does not match its available frame.')
+            if saved.get('allocation_rule') != expected['allocation_rule']:
+                balanced_quota = min(quota_per_side,
+                                     int(available.boundary_side.eq('inside').sum()),
+                                     int(available.boundary_side.eq('outside').sum()))
+                old_selected = part.selected.astype(str).str.lower().eq('true')
+                new_selected = pd.to_numeric(part.random_order).le(balanced_quota)
+                if not old_selected.equals(new_selected):
+                    backup_dir = stage_dir/'previous_draws'
+                    backup_dir.mkdir(exist_ok=True)
+                    backup_csv = backup_dir/f'{safe_id}_before_balance.csv'
+                    backup_meta = backup_dir/f'{safe_id}_before_balance.json'
+                    if not backup_csv.exists():
+                        backup_csv.write_bytes(csv_path.read_bytes())
+                        backup_meta.write_bytes(meta_path.read_bytes())
+                    rebalanced.append(cluster_id)
+                part['selected'] = new_selected
+                part['planned_quota'] = quota_per_side
+                part['selected_quota'] = balanced_quota
+                part['capacity_shortfall'] = quota_per_side-balanced_quota
+                for side in ('inside','outside'):
+                    mask = part.boundary_side.eq(side)
+                    if mask.any():
+                        part.loc[mask,'within_stage_probability'] = balanced_quota/int(mask.sum())
+                part.to_csv(csv_path,index=False)
+                saved.update(expected)
+                meta_path.write_text(json.dumps(saved,indent=2),encoding='utf-8')
             reused.append(cluster_id)
         else:
             part = draw_one_cluster(available, cluster_id, stage, quota_per_side, seed,
@@ -210,7 +247,7 @@ def incremental_draw(frame, clusters, output_base, stage, quota_per_side, seed,
     reserves = draw.loc[~draw.selected].sort_values(['cluster_id','boundary_side','random_order']).copy()
     reserves['reserve_rank'] = reserves.random_order - reserves.selected_quota
     reserves.to_csv(stage_dir / 'reserve_parcel_order.csv', index=False)
-    return draw, stage_dir, added, reused, migrated
+    return draw, stage_dir, added, reused, migrated, rebalanced
 
 
 def cluster_summary(review, frame, draw, quota_per_side, primary_ids):
@@ -248,8 +285,14 @@ def save_field_outputs(review, draw, stage_dir, released_ids=None):
         contact[name] = ''
     if contact_path.exists():
         previous = pd.read_csv(contact_path,dtype=str)
-        if not set(previous.parcel_id) <= set(contact.parcel_id):
-            raise ValueError('Existing contact log contains a parcel outside the current draw.')
+        removed = previous.loc[~previous.parcel_id.isin(contact.parcel_id)].copy()
+        if len(removed):
+            retired_path = stage_dir/'field_contact_log_removed_after_balance.csv'
+            if retired_path.exists():
+                removed = pd.concat([pd.read_csv(retired_path,dtype=str),removed],ignore_index=True)
+                removed = removed.drop_duplicates('parcel_id',keep='first')
+            removed.to_csv(retired_path,index=False)
+        previous = previous.loc[previous.parcel_id.isin(contact.parcel_id)].copy()
         editable = columns[6:]
         contact = contact.set_index('parcel_id')
         previous = previous.set_index('parcel_id')
