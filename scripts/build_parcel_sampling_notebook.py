@@ -24,7 +24,6 @@ code('''# Run this cell in a fresh Colab runtime.
 %pip -q install geopandas pyogrio shapely folium
 
 from pathlib import Path
-from datetime import datetime, timezone
 import hashlib, json, math
 import numpy as np
 import pandas as pd
@@ -52,7 +51,7 @@ RUN_LABEL = 'study_2026'  # keep this unchanged when adding clusters
 OUTPUT_BASE = PROJECT_ROOT / 'data/output/parcel_household_sample' / RUN_LABEL
 DRAW_STAGE = 1  # use 2 only for the optional later expansion
 RUN_DRAW = True
-STAGE1_RELEASED_RESERVES_CSV = OUTPUT_BASE / 'stage1/released_reserves.csv'
+STAGE1_RESERVES_CSV = OUTPUT_BASE / 'stage1/reserve_parcel_order.csv'
 
 EXPECTED_PRIMARY_CLUSTERS = 12
 BOUNDARY_BAND_M = 20.0
@@ -99,36 +98,19 @@ display(cluster_summary(review, frame, None, quota_per_side, primary_ids))
 
 md('''## Draw and fieldwork
 
-The table shows every cluster in Parcel Review. The initial release is about 200 parcels across 12 clusters; the 50% response rate estimates later reserve use, not the initial selection. If a selected parcel is a store or empty, log it and release the next reserve on the **same cluster and side**. At a residential parcel with `H` eligible households, interview number `floor(household_draw_u × H) + 1` from a fixed listing order.
+The table shows every cluster in Parcel Review. The initial release is about 200 parcels across 12 clusters; the 50% response rate estimates later reserve use. If a parcel is ineligible, mark the next parcel on the same cluster and side `released=true` in `reserve_parcel_order.csv`. `random_order` ranks parcels. `household_draw_u` is a separate random number: with `H` eligible households, interview household number `floor(household_draw_u × H) + 1` from a fixed listing order.
 ''')
 
 code('''if RUN_DRAW:
     draw, stage_dir, added, reused, migrated, rebalanced = incremental_draw(
         frame, clusters, OUTPUT_BASE, DRAW_STAGE, quota_per_side, RANDOM_SEED,
         primary_probabilities,
-        STAGE1_RELEASED_RESERVES_CSV if DRAW_STAGE == 2 else None)
-    if DRAW_STAGE == 1 and not STAGE1_RELEASED_RESERVES_CSV.exists():
-        pd.DataFrame(columns=['parcel_id']).to_csv(STAGE1_RELEASED_RESERVES_CSV,index=False)
-    released_ids = (load_released_reserves(STAGE1_RELEASED_RESERVES_CSV,draw)
+        STAGE1_RESERVES_CSV if DRAW_STAGE == 2 else None)
+    released_ids = (load_released_reserves(STAGE1_RESERVES_CSV,draw)
                     if DRAW_STAGE == 1 else set())
     save_field_outputs(review, draw, stage_dir, released_ids)
     summary = cluster_summary(review, frame, draw, quota_per_side, primary_ids)
     summary.to_csv(stage_dir/'cluster_sampling_summary.csv',index=False)
-    manifest = {'created_utc':datetime.now(timezone.utc).isoformat(),
-                'run_label':RUN_LABEL,'stage':DRAW_STAGE,
-                'listed_cluster_ids':sorted(listed_ids),
-                'primary_cluster_draw_file':str(CLUSTER_DRAW_CSV) if primary_ids else None,
-                'planned_completed_interviews':target,
-                'planning_response_rate':PLANNING_RESPONSE_RATE,
-                'initial_parcel_release_target':INITIAL_PARCEL_RELEASE_TARGET,
-                'initial_balanced_contacts_for_12':quota_per_side*2*EXPECTED_PRIMARY_CLUSTERS,
-                'estimated_total_contacts_for_completed_target':estimated_total_contacts,
-                'quota_per_cluster_side':quota_per_side,
-                'random_seed':RANDOM_SEED,
-                'added_clusters':added,'reused_clusters':reused,
-                'migrated_prior_cluster_draws':migrated,
-                'rebalanced_clusters':rebalanced}
-    (stage_dir/'sampling_manifest.json').write_text(json.dumps(manifest,indent=2),encoding='utf-8')
     print('New cluster draws:', added, '| Preserved cluster draws:', reused)
     if migrated:
         print('Migrated older draw files, preserving their random order:', migrated)
@@ -146,7 +128,7 @@ code('''if draw is not None:
     sample_map = show_sample_map(review, clusters, draw, stage_dir,
                                  released_ids if DRAW_STAGE == 1 else None)
     display(sample_map)
-    print('Interactive map:', stage_dir / 'selected_parcels_map.html')
+    print('Interactive map displayed above; it is not saved as a separate file.')
 ''')
 
 notebook = {'cells':CELLS,
