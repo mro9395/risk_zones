@@ -140,7 +140,7 @@ def migrate_existing_draw(frame, clusters, stage_dir, frozen_dir, stage,
                 'frame_hash':cluster_frame_hash(full,clusters.loc[cluster_id].geometry),
                 'quota_per_side':quota_per_side,'random_seed':seed,
                 'released_stage1_reserves':[],
-                'allocation_rule':'equal_inside_outside_within_cluster',
+                'allocation_rule':'balanced_initial_release_without_response_inflation',
                 'migrated_from_prior_draw':True}
         (frozen_dir/f'{safe_id}.json').write_text(json.dumps(meta,indent=2),encoding='utf-8')
         migrated.append(cluster_id)
@@ -188,14 +188,17 @@ def incremental_draw(frame, clusters, output_base, stage, quota_per_side, seed,
         expected = {'cluster_id':cluster_id,'stage':stage,'frame_hash':frame_hash,
                     'quota_per_side':quota_per_side,'random_seed':seed,
                     'released_stage1_reserves':released_here,
-                    'allocation_rule':'equal_inside_outside_within_cluster'}
+                    'allocation_rule':'balanced_initial_release_without_response_inflation'}
         if csv_path.exists() != meta_path.exists():
             raise ValueError(f'Incomplete frozen draw for {cluster_id}.')
         if csv_path.exists():
             saved = json.loads(meta_path.read_text(encoding='utf-8'))
             if any(saved.get(key) != value for key,value in expected.items()
-                   if key != 'allocation_rule'):
+                   if key not in ('allocation_rule','quota_per_side')):
                 raise ValueError(f'{cluster_id} changed after its draw; prior selections were kept. Review the frame.')
+            if (saved.get('allocation_rule') == expected['allocation_rule'] and
+                    saved.get('quota_per_side') != quota_per_side):
+                raise ValueError(f'{cluster_id} initial release quota changed after this draw.')
             part = pd.read_csv(csv_path, dtype={'parcel_id':str,'cluster_id':str})
             if set(part.parcel_id.str.upper()) != set(available.parcel_id.str.upper()):
                 raise ValueError(f'{cluster_id} frozen draw does not match its available frame.')

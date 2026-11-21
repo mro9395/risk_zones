@@ -58,6 +58,7 @@ EXPECTED_PRIMARY_CLUSTERS = 12
 BOUNDARY_BAND_M = 20.0
 STAGE1_COMPLETED_TARGET = 200
 STAGE2_ADDITIONAL_COMPLETED_TARGET = 200
+INITIAL_PARCEL_RELEASE_TARGET = 200  # initial contacts; release reserves after field outcomes
 PLANNING_RESPONSE_RATE = 0.50
 RANDOM_SEED = 20261120
 
@@ -81,10 +82,16 @@ else:
         print('Listed clusters absent from the 12 primary draw:', outside_primary)
     print('Primary clusters listed so far:', len(listed_ids & primary_ids), 'of', EXPECTED_PRIMARY_CLUSTERS)
 target = STAGE1_COMPLETED_TARGET if DRAW_STAGE == 1 else STAGE2_ADDITIONAL_COMPLETED_TARGET
-planned_contacts = math.ceil(target / PLANNING_RESPONSE_RATE)
-quota_per_side = math.ceil(planned_contacts / (2 * EXPECTED_PRIMARY_CLUSTERS))
-print('Per cluster and side:', quota_per_side, 'parcel contacts; all 12 clusters would plan',
-      quota_per_side * 2 * EXPECTED_PRIMARY_CLUSTERS, 'contacts.')
+estimated_total_contacts = math.ceil(target / PLANNING_RESPONSE_RATE)
+quota_per_side = INITIAL_PARCEL_RELEASE_TARGET // (2 * EXPECTED_PRIMARY_CLUSTERS)
+if quota_per_side < 1:
+    raise ValueError('Initial release target is too small for all cluster sides.')
+print('Initial release:', quota_per_side, 'per cluster and side, up to',
+      quota_per_side * 2 * EXPECTED_PRIMARY_CLUSTERS, 'balanced contacts across all 12 clusters.')
+print('The remaining', INITIAL_PARCEL_RELEASE_TARGET - quota_per_side * 2 * EXPECTED_PRIMARY_CLUSTERS,
+      'initial contacts and later nonresponses can be covered from reserves.')
+print('At the planning response rate, about',estimated_total_contacts,
+      'total contacts may be needed for',target,'completed interviews.')
 print('Unreviewed rows in listed clusters:',
       int(review.review_status.eq('unreviewed').sum()))
 display(cluster_summary(review, frame, None, quota_per_side, primary_ids))
@@ -92,7 +99,7 @@ display(cluster_summary(review, frame, None, quota_per_side, primary_ids))
 
 md('''## Draw and fieldwork
 
-The table shows every cluster in Parcel Review. The draw fixes each cluster's random order separately. If a selected parcel is a store or empty, log it and use the next reserve on the **same cluster and side**. At a residential parcel with `H` eligible households, interview number `floor(household_draw_u × H) + 1` from a fixed listing order.
+The table shows every cluster in Parcel Review. The initial release is about 200 parcels across 12 clusters; the 50% response rate estimates later reserve use, not the initial selection. If a selected parcel is a store or empty, log it and release the next reserve on the **same cluster and side**. At a residential parcel with `H` eligible households, interview number `floor(household_draw_u × H) + 1` from a fixed listing order.
 ''')
 
 code('''if RUN_DRAW:
@@ -113,7 +120,9 @@ code('''if RUN_DRAW:
                 'primary_cluster_draw_file':str(CLUSTER_DRAW_CSV) if primary_ids else None,
                 'planned_completed_interviews':target,
                 'planning_response_rate':PLANNING_RESPONSE_RATE,
-                'planned_contacts_for_12':planned_contacts,
+                'initial_parcel_release_target':INITIAL_PARCEL_RELEASE_TARGET,
+                'initial_balanced_contacts_for_12':quota_per_side*2*EXPECTED_PRIMARY_CLUSTERS,
+                'estimated_total_contacts_for_completed_target':estimated_total_contacts,
                 'quota_per_cluster_side':quota_per_side,
                 'random_seed':RANDOM_SEED,
                 'added_clusters':added,'reused_clusters':reused,

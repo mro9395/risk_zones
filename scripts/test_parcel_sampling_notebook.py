@@ -71,6 +71,18 @@ with TemporaryDirectory() as folder:
     assert balanced.selected.sum() == 150
     assert (old_stage/'previous_draws/PER_100m_C00044_before_balance.csv').exists()
 
+    quota_base = base/'prior_response_inflated_draw'
+    _,quota_stage,_,_,_,_ = draw_fn(frame,clusters,quota_base,1,17,20261120,{})
+    for meta_path in (quota_stage/'frozen_clusters').glob('*.json'):
+        metadata = json.loads(meta_path.read_text(encoding='utf-8'))
+        metadata['allocation_rule'] = 'equal_inside_outside_within_cluster'
+        meta_path.write_text(json.dumps(metadata),encoding='utf-8')
+    smaller,_,_,_,_,rebalanced = draw_fn(frame,clusters,quota_base,1,8,20261120,{})
+    assert len(rebalanced) == 4 and smaller.selected.sum() == 78
+    small_c44 = smaller.loc[smaller.cluster_id.eq('PER_100m_C00044')]
+    assert small_c44.groupby('boundary_side').selected.sum().to_dict() == {
+        'inside':7,'outside':7}
+
     legacy_base = base/'legacy_run'
     (legacy_base/'stage1').mkdir(parents=True)
     first.to_csv(legacy_base/'stage1/random_order_and_selection.csv',index=False)
@@ -119,6 +131,7 @@ with TemporaryDirectory() as folder:
     for index in (4,5,7):
         exec(compile(''.join(cells[index]['source']),f'cell {index}','exec'),run)
     assert len(run['summary']) == 5
+    assert run['draw'].selected.sum() == 78
     assert (run['stage_dir']/'cluster_sampling_summary.csv').exists()
     assert (run['stage_dir']/'reserve_parcel_order.csv').exists()
     print('Incremental sampling and Stage 2 nonoverlap passed')
